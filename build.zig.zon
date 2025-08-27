@@ -1,7 +1,7 @@
 .{
-    .name = .htx,
+    .name = .html_parser,
     .version = "0.0.0",
-    .fingerprint = 0xac0806766a80647f,
+    .fingerprint = 0x1fb7cbfa7d4b0a6c,
     .minimum_zig_version = "0.16.0-dev.9+8248597a2",
     .dependencies = .{},
     .paths = .{
