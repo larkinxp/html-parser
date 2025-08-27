@@ -1,0 +1,14 @@
+.{
+    .name = .htx,
+    .version = "0.0.0",
+    .fingerprint = 0xac0806766a80647f,
+    .minimum_zig_version = "0.16.0-dev.9+8248597a2",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+        "samples",
+    },
+}
