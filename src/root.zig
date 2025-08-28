@@ -1,11 +1,5 @@
 const std = @import("std");
 
-pub const ScanMode = enum {
-    NextElement,
-    TagName,
-    TagText,
-};
-
 fn trimTag(string: []const u8) []const u8 {
     return std.mem.trim(
         u8,
@@ -42,72 +36,58 @@ pub fn elementFromTagText(
         .tag_name = tag_name,
         .tag_text = tag_text,
         .nested = nested,
-        .children = try std.array_list.Managed(Element).initCapacity(allocator, 0),
+        .items = try std.array_list.Managed(*Element).initCapacity(allocator, 0),
         //.parent = null,
     };
 }
 
-pub fn parseString(allocator: std.mem.Allocator, string: []u8) !Dom {
+const ElementTextIterator = struct {
+    haystack: []const u8,
+    pub fn next(self: *ElementTextIterator) ?struct { []const u8, TagType } {
+        const start = std.mem.indexOf(u8, self.haystack, "<").?;
+        const end = std.mem.indexOf(u8, self.haystack[start..], ">").? + 1;
+        const result = self.parse(start, end);
+        self.haystack = self.haystack[start + end ..];
+        return result;
+    }
+    pub fn parse(
+        self: *ElementTextIterator,
+        start: usize,
+        end: usize,
+    ) struct { []const u8, TagType } {
+        const tag_text = self.haystack[start .. start + end];
+        const tag_type = tagTypeFromTagText(tag_text);
+        return .{ tag_text, tag_type };
+    }
+};
+
+pub fn parseString(allocator: std.mem.Allocator, string: []u8) !Document {
     // Create a default root element to hold the tree structure.
     var root = try Element.default(allocator);
+    var document = Document{
+        .items = root.items.items,
+        .all = std.array_list.Managed(Element).init(allocator),
+    };
     var nested: usize = 0;
-    var closed_tag = false;
-    for (string, 0..) |char, i| {
-        if (std.mem.eql(u8, &[_]u8{char}, "<")) {
-            if (std.mem.indexOf(u8, string[i..], ">")) |last_i| {
-                const tag_text = trimTag(string[i .. i + 1 + last_i]);
-                const tag_type = tagTypeFromTagText(tag_text);
-
-                std.debug.print("Found text: {s}\n", .{tag_text});
-
-                const element = try elementFromTagText(
-                    allocator,
-                    tag_text,
-                    tag_type,
-                    nested,
-                );
-
-                try root.appendChild(nested, element, closed_tag);
-
-                std.debug.print("root: {}\n", .{root.children});
-
-                if (tag_type == TagType.StartTag) {
-                    closed_tag = false;
-                    nested += 1;
-                }
-
-                // closing tag, deduct index and set parent to previous element
-                if (tag_type == TagType.EndTag) {
-                    closed_tag = true;
-                    nested -= 1;
-                }
-
-                //for (root.children.items) |item1| {
-                //std.debug.print("\t{s}\n", .{item1.tag_text});
-                //for (item1.children.items) |item2| {
-                //std.debug.print("\t\t{s}\n", .{item2.tag_text});
-                //for (item2.children.items) |item3| {
-                //std.debug.print("\t\t{s}\n", .{item3.tag_text});
-                //}
-                //}
-                //}
-            }
-        }
-    }
-    std.debug.print("\n\n\n", .{});
-    for (root.children.items) |dom_child| {
-        std.debug.print(
-            "DomChildren: TagName={s} ChildCount={d}\n",
-            .{ dom_child.tag_name, dom_child.children.items.len },
+    var iterator = ElementTextIterator{ .haystack = string };
+    while (iterator.next()) |tag| {
+        std.debug.print("Found text: {s}\n", .{tag[0]});
+        var element = try elementFromTagText(
+            allocator,
+            tag[0],
+            tag[1],
+            nested,
         );
-        for (dom_child.children.items) |child1| {
-            std.debug.print(
-                "DomChildren: child1: TagName={s} ChildCount={d}\n",
-                .{ child1.tag_name, child1.children.items.len },
-            );
+        try root.append(nested, &element);
+        if (tag[1] == TagType.StartTag) {
+            nested += 1;
         }
+        if (tag[1] == TagType.EndTag) {
+            nested -= 1;
+        }
+        try document.all.append(element);
     }
-    return Dom{ .children = root.children.items };
+    return document;
 }
 
 pub const Element = struct {
@@ -115,52 +95,51 @@ pub const Element = struct {
     tag_name: []const u8,
     tag_text: []const u8,
     nested: usize,
-    children: std.array_list.Managed(Element),
+    items: std.array_list.Managed(*Element),
 
     fn default(allocator: std.mem.Allocator) !Element {
         return Element{
             //.parent = null,
-            .tag_name = "dom",
-            .tag_text = "<dom></dom>",
+            .tag_name = "document",
+            .tag_text = "<!DOCTYPE html>",
             .nested = 0,
-            .children = try std.array_list.Managed(Element).initCapacity(allocator, 0),
+            .items = try std.array_list.Managed(*Element).initCapacity(allocator, 0),
         };
     }
 
     /// User passes nested 3, close tag
-    fn appendChild(
+    fn append(
         self: *Element,
         nested: usize,
-        element: Element,
-        closed_tag: bool,
+        element: *Element,
     ) !void {
-        std.debug.print(
-            "appendChild: nested={d} insert_element_tag={s} parent_element_tag={s} closed_tag={any} append1={any}\n",
-            .{ nested, element.tag_text, self.tag_text, closed_tag, nested == 0 },
-        );
         if (nested == 0) {
-            return try self.children.append(element);
+            std.debug.print("adding child {s} to: {s}\n", .{ element.tag_name, self.tag_name });
+            return try self.items.append(element);
         }
-        var child = self.children.items[self.children.items.len - 1];
-        return try child.appendChild(nested - 1, element, closed_tag);
+        std.debug.print("skip adding child {s} to: {s} nested={d}\n", .{ element.tag_name, self.tag_name, nested });
+        var child = self.items.getLast();
+        return try child.append(nested - 1, element);
     }
 };
 
-pub const Dom = struct {
-    children: []Element,
+pub const Document = struct {
+    items: []*Element,
+    all: std.array_list.Managed(Element),
 };
 
-test "simple" {
+// zig test --test-filter "simple" src/root.zig
+test "parse html from file simple" {
     const html = try std.fs.cwd().readFileAlloc(
         std.heap.page_allocator,
         "./samples/simple.html",
         999999,
     );
-    const dom = try parseString(std.heap.page_allocator, html);
-    const htmlElement = dom.children[0];
+    const document = try parseString(std.heap.page_allocator, html);
+    const htmlElement = document.items[0];
     try std.testing.expectEqualStrings(htmlElement.tag_name, "html");
-    const headElement = htmlElement.children.items[0];
+    const headElement = htmlElement.items.items[0];
     try std.testing.expectEqualStrings(headElement.tag_name, "head");
-    const titleElement = headElement.children.items[0];
+    const titleElement = headElement.items.items[0];
     try std.testing.expectEqualStrings(titleElement.tag_name, "title");
 }
